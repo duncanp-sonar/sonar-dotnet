@@ -379,12 +379,25 @@ Stack trace: {e.StackTrace}";
         private void RaiseIssuesFromJSon(CompilationAnalysisContext context)
         {
             string jsonFileContent;
-            List<List<JObject>> jsonIssues;
+            JArray issuesList;
             LogIfFailure($"- parsing json file {cbdeJsonOutputPath}");
             try
             {
                 jsonFileContent = File.ReadAllText(cbdeJsonOutputPath);
-                jsonIssues = JsonConvert.DeserializeObject<List<List<JObject>>>(jsonFileContent);
+
+                using (var textReader = new StringReader(jsonFileContent))
+                using (JsonReader reader = new JsonTextReader(textReader))
+                {
+                    // We're avoiding using JsonConvert since it has code paths that hit .NET runtime-specific
+                    // code so it won't work on both .NET46 and .NET Core (specifically, we're referencing the
+                    // NET46 version of NewtonSoft.JSON. JsonConvert dynamically generates code, which in NET46
+                    // means using Code Access Security types in System.Security.Permissions).
+                    // By using JArray instead we avoid the reflection/code generation code paths.
+                    var outer = JArray.Load(reader);
+                    // in cbde json output there is enclosing {}, so this is considered as a list of list
+                    // with one element in the outer list
+                    issuesList = outer?.First() as JArray;
+                }
             }
             catch(Exception exception)
             {
@@ -397,9 +410,7 @@ Stack trace: {e.StackTrace}";
                 throw;
             }
 
-            // in cbde json output there is enclosing {}, so this is considered as a list of list
-            // with one element in the outer list
-            foreach (var issue in jsonIssues.First())
+            foreach (var issue in issuesList)
             {
                 LogIfFailure($"  * processing token {issue.ToString()}");
                 try
@@ -427,11 +438,11 @@ Stack trace: {e.StackTrace}";
 
             public void Reset()
             {
-                totalMsStart = currentProcessThread.TotalProcessorTime.TotalMilliseconds;
+                totalMsStart = currentProcessThread?.TotalProcessorTime.TotalMilliseconds ?? 0;
             }
 
             public long ElapsedMilliseconds =>
-                (long)(currentProcessThread.TotalProcessorTime.TotalMilliseconds - totalMsStart);
+                (long)((currentProcessThread?.TotalProcessorTime.TotalMilliseconds ?? 0) - totalMsStart);
 
             private static ProcessThread GetCurrentProcessThread()
             {
